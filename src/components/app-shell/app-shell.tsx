@@ -134,7 +134,7 @@ export function AppShell({ sections, user, accountHref, controls, notifications,
           </Link>
 
           <div className="ml-auto flex items-center gap-2">
-            {controls ? <div className="w-28 sm:w-32">{controls}</div> : null}
+            {controls ? <div className="shrink-0">{controls}</div> : null}
             <Link
               href={guideHref}
               aria-current={isActivePath(pathname, guideHref) ? "page" : undefined}
