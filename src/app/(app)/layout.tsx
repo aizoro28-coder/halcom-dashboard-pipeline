@@ -1,61 +1,99 @@
-import { Suspense } from "react";
-import { AppShell } from "@/components/app-shell/app-shell";
+"use client";
+
+import { useEffect, useSyncExternalStore } from "react";
+import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ROLE_LABELS } from "@/domain/access/roles";
-import { logoutAction, switchAccountAction } from "@/features/auth/actions";
-import { SessionKeepAlive } from "@/features/auth/session-keep-alive";
-import { ACCOUNT_PATH, GUIDE_PATH, NOTIFICATIONS_PATH, navSectionsFor } from "@/features/navigation/links";
-import { ThemeSwitcher } from "@/features/theme/theme-switcher";
-import { getDb } from "@/lib/db";
-import { requireUser } from "@/server/auth/current-user";
-import { countUnread, hasUnreadRevision } from "@/server/notifications/service";
+import {
+  parseThemeMode,
+  resolveIsDark,
+  THEME_STORAGE_KEY,
+  type ThemeMode,
+} from "./theme";
 
-// Every page under (app) is per-user and needs a live session check (a deactivated
-// user must lose access immediately, so the session cannot be cached ahead of time).
-// Navigations into this segment therefore block on the server, and instant-navigation
-// validation, which renders without a session, cannot succeed here.
-export const instant = false;
+const CHANGE_EVENT = "theme-change";
 
-// Everything under (app) needs a signed-in user. The session is read at request
-// time, so the authenticated shell streams in behind this Suspense boundary.
-export default function AppLayout({ children }: LayoutProps<"/">) {
-  return (
-    <Suspense fallback={<p className="p-6 text-sm text-muted-foreground">Memuat halaman…</p>}>
-      <AuthenticatedShell>{children}</AuthenticatedShell>
-    </Suspense>
+function readMode(): ThemeMode {
+  try {
+    return parseThemeMode(localStorage.getItem(THEME_STORAGE_KEY));
+  } catch {
+    return parseThemeMode(null);
+  }
+}
+
+function subscribe(onChange: () => void): () => void {
+  window.addEventListener(CHANGE_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+
+  return () => {
+    window.removeEventListener(CHANGE_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function applyTheme(mode: ThemeMode): void {
+  const systemPrefersDark = window.matchMedia(
+    "(prefers-color-scheme: dark)",
+  ).matches;
+
+  document.documentElement.classList.toggle(
+    "dark",
+    resolveIsDark(mode, systemPrefersDark),
   );
 }
 
-async function AuthenticatedShell({ children }: { children: React.ReactNode }) {
-  const user = await requireUser();
-  const [unread, urgent] = await Promise.all([countUnread(getDb(), user.id), hasUnreadRevision(getDb(), user.id)]);
+export function ThemeSwitcher() {
+  const mode = useSyncExternalStore(
+    subscribe,
+    readMode,
+    () => parseThemeMode(null),
+  );
+
+  const systemPrefersDark =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+  const isDark = resolveIsDark(mode, systemPrefersDark);
+
+  useEffect(() => {
+    applyTheme(mode);
+
+    if (mode !== "system") return;
+
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme(mode);
+
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [mode]);
+
+  function toggleTheme() {
+    const next: ThemeMode = isDark ? "light" : "dark";
+
+    applyTheme(next);
+
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Theme tetap diterapkan untuk sesi browser saat ini.
+    }
+
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  }
 
   return (
-    <AppShell
-      sections={navSectionsFor(user.role)}
-      user={{ name: user.name, roleLabel: ROLE_LABELS[user.role] }}
-      accountHref={ACCOUNT_PATH}
-      notifications={{ href: NOTIFICATIONS_PATH, unread, urgent }}
-      guideHref={GUIDE_PATH}
-     controls={<ThemeSwitcher />}
-      signOut={
-        <div className="flex flex-col gap-2">
-          {/* Ends this session, then shows the sign-in page with the accounts used on this browser. */}
-          <form action={switchAccountAction}>
-            <Button type="submit" variant="outline" className="w-full">
-              Switch account
-            </Button>
-          </form>
-          <form action={logoutAction}>
-            <Button type="submit" variant="outline" className="w-full">
-              Sign out
-            </Button>
-          </form>
-        </div>
-      }
+    <Button
+      type="button"
+      variant="outline"
+      size="icon-lg"
+      onClick={toggleTheme}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
     >
-      <SessionKeepAlive />
-      {children}
-    </AppShell>
+      {isDark ? (
+        <Sun aria-hidden className="size-4" />
+      ) : (
+        <Moon aria-hidden className="size-4" />
+      )}
+    </Button>
   );
 }
